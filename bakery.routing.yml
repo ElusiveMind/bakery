@@ -6,6 +6,5 @@ bakery.admin_settings:
   requirements:
     _permission: 'administer site configuration'
 
-
 route_callbacks:
   - '\Drupal\bakery\Routing\BakeryRoutes::routes'

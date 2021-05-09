@@ -31,11 +31,6 @@ class BakerySettingsForm extends ConfigFormBase {
    */
   public function buildForm(array $form, FormStateInterface $form_state) {
     $config = $this->config('bakery.settings');
-
-    //print "<pre>";
-    //print_r(openssl_get_cipher_methods());
-    //exit();
-    
     $form['bakery_is_main'] = array(
       '#type' => 'checkbox',
       '#title' => 'Is this the main site?',

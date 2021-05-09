@@ -14,7 +14,7 @@ class BakeryRoutes {
    */
   public function routes() {
     $routes = array();
-    if (\Drupal::config('bakery.settings')->get('bakery_is_master')) {
+    if (\Drupal::config('bakery.settings')->get('bakery_is_main')) {
       $routes['bakery.register'] = new Route(
         // Path to attach this route to:
         '/bakery',

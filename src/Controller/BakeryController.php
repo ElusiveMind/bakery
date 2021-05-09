@@ -10,10 +10,15 @@ namespace Drupal\bakery\Controller;
 use Drupal\user\Entity\User;
 use Drupal\Core\Controller\ControllerBase;
 use Symfony\Component\DependencyInjection\ContainerInterface;
+use Drupal\Core\Form\FormState;
+use Drupal\Core\Form\FormBuilder;
 use Drupal\bakery\BakeryService;
 use Drupal\Component\Utility\Xss;
 use Drupal\Core\Access\AccessResult;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
+use Drupal\Core\Routing\TrustedRedirectResponse;
+use Drupal\Core\Messenger\MessengerInterface;
+#use Drupal\user\Form;
 
 /**
  * Route callback functionlities.
@@ -47,7 +52,7 @@ class BakeryController extends ControllerBase {
   }
 
   /**
-   * Special Bakery register callback registers the user and returns to slave.
+   * Special Bakery register callback registers the user and returns to minion.
    */
   public function bakeryRegister() {
 
@@ -55,7 +60,7 @@ class BakeryController extends ControllerBase {
     if ($cookie) {
       // Valid cookie.
       // Destroy the current oatmeal cookie,
-      // we'll set a new one when we return to the slave.
+      // we'll set a new one when we return to the minion.
       $this->bakery_service->eatCookie('OATMEAL');
       // TODO: need to fix
       // if (variable_get('user_register', 1)) {.
@@ -69,19 +74,19 @@ class BakeryController extends ControllerBase {
 
         // Check if user exists with same email.
         $account = user_load_by_mail($mail);
-        if ($account) {
+        if (!empty($account)) {
           $errors['mail'] = 1;
         }
         else {
           // Check username.
           $account = user_load_by_name($name);
-          if ($account) {
+          if (!empty($account)) {
             $errors['name'] = 1;
           }
         }
       }
       else {
-        \Drupal::logger('bakery')->error('Master Bakery site user registration is disabled but users are trying to register from a subsite.');
+        \Drupal::logger('bakery')->error('Main Bakery site user registration is disabled but users are trying to register from a subsite.');
         $errors['register'] = 1;
       }
       if (empty($errors)) {
@@ -109,11 +114,11 @@ class BakeryController extends ControllerBase {
         $account->activate();
         // Save user.
         $account->save();
-        // Set some info to return to the slave.
+        // Set some info to return to the minion.
         $data['uid'] = $account->id();
         $data['mail'] = $mail;
-        \Drupal::logger('bakery')->notice('New external user: %name using module bakery from slave !slave.', array('%name' => $account->getUsername(), '!slave' => $cookie['slave']));
-        // Redirect to slave.
+        \Drupal::logger('bakery')->notice('New external user: %name using module bakery from minion !minion.', array('%name' => $account->getUsername(), '!minion' => $cookie['minion']));
+        // Redirect to minion.
         if (!$this->config('user.settings')->get('verify_mail')) {
           // Create identification cookie and log user in.
           $init = $this->bakery_service->initField($account->id());
@@ -121,7 +126,7 @@ class BakeryController extends ControllerBase {
           $this->bakery_service->userExternalLogin($account);
         }
         else {
-          // The user needs to validate their email, redirect back to slave to
+          // The user needs to validate their email, redirect back to minion to
           // inform them.
           $errors['validate'] = 1;
         }
@@ -132,7 +137,7 @@ class BakeryController extends ControllerBase {
         session_destroy();
       }
 
-      // Redirect back to custom Bakery callback on slave.
+      // Redirect back to custom Bakery callback on minion.
       $data['errors'] = $errors;
       $data['name'] = $name;
       // Carry destination through return.
@@ -140,69 +145,51 @@ class BakeryController extends ControllerBase {
         $data['destination'] = $cookie['data']['destination'];
       }
 
-      // Bake a new cookie for validation on the slave.
-      $this->bakery_service->bakeChocolatechipCookie($name, $data);
-      $this->redirect($cookie['slave'] . 'bakery');
+      // Bake a new cookie for validation on the minion.
+      $this->bakery_service->bakeOatmealCookie($name, $data);
+      return new TrustedRedirectResponse($cookie['minion'] . 'bakery');
     }
     // Invalid request.
     throw new AccessDeniedHttpException();
   }
 
   /**
-   * Special Bakery login callback authenticates the user and returns to slave.
+   * Special Bakery login callback authenticates the user and returns to minion.
    */
   public function bakeryLogin() {
-
     $cookie = $this->bakeryTasteOatmealCookie();
-
     if ($cookie) {
-      $errors = array();
+      $errors = [];
       // Remove the data pass cookie.
       $this->bakery_service->eatCookie('OATMEAL');
 
       // First see if the user_login form validation has any errors for them.
       $name = trim($cookie['data']['name']);
       $pass = trim($cookie['data']['pass']);
-      // Execute the login form which checks
-      // username, password, status and flood.
-      $form_state = array();
-      $form_state['values'] = $cookie['data'];
-      drupal_form_submit('user_login', $form_state);
-      // $errors = form_get_errors();
-      $errors = \Drupal::formBuilder()->getErrors();
 
-      if (empty($errors)) {
-        // Check if account credentials are correct.
-        $account = user_load_by_name($name);
-        if ($account->id()) {
-          // Check if the mail is denied.
-          if (drupal_is_denied('user', $account->getEmail())) {
-            $errors['name'] = t('The name %name is registered using a reserved e-mail address and therefore could not be logged in.', array('%name' => $name));
-          }
-          else {
-            // Passed all checks, create identification cookie and log in.
-            $init = $this->bakery_service->initField($account->id());
-            $this->bakery_service->bakeChocolatechipCookie($account->getUsername(), $account->getEmail(), $init);
-            $user = \Drupal::currentUser();
-            $user = $account;
-            $edit = array('name' => $user->getUsername());
-            user_login_finalize($account);
-          }
-        }
-        else {
-          $errors['incorrect-credentials'] = 1;
-        }
+      $uid = \Drupal::service('user.auth')->authenticate($name, $pass);
+      $account = \Drupal\user\Entity\User::load($uid);
+      if ($account->id()) {
+        $init = $this->bakery_service->initField($account->id());
+        $this->bakery_service->bakeChocolatechipCookie($account->getUsername(), $account->getEmail(), $init);
+        $user = \Drupal::currentUser();
+        $user = $account;
+        $edit = array('name' => $user->getUsername());
+        user_login_finalize($account);
+      }
+      else {
+        $errors['incorrect-credentials'] = 1;
       }
 
       if (!empty($errors)) {
         // Report failed login.
         \Drupal::logger('user')->notice('Login attempt failed for %user.', array('%user' => $name));
-        // Clear the messages on the master's session,
+        // Clear the messages on the main's session,
         // since they were set during
         // drupal_form_submit() and will be displayed out of context.
         drupal_get_messages();
       }
-      // Bake a new cookie for validation on the slave.
+      // Bake a new cookie for validation on the minion.
       $data = array(
         'errors' => $errors,
         'name' => $name,
@@ -211,8 +198,8 @@ class BakeryController extends ControllerBase {
       if (isset($cookie['data']['destination'])) {
         $data['destination'] = $cookie['data']['destination'];
       }
-      $this->bakery_service->bakeChocolatechipCookie($name, $data);
-      $this->redirect($cookie['slave'] . '/bakery/login');
+      $this->bakery_service->bakeOatmealCookie($name, $data);
+      return new TrustedRedirectResponse($cookie['minion'] . 'bakery/login');
     }
     throw new AccessDeniedHttpException();
   }
@@ -224,8 +211,8 @@ class BakeryController extends ControllerBase {
     // Session was set in validate.
     $name = $_SESSION['bakery']['name'];
     unset($_SESSION['bakery']['name']);
-    $slave = $_SESSION['bakery']['slave'];
-    unset($_SESSION['bakery']['slave']);
+    $minion = $_SESSION['bakery']['minion'];
+    unset($_SESSION['bakery']['minion']);
     $uid = $_SESSION['bakery']['uid'];
     unset($_SESSION['bakery']['uid']);
 
@@ -234,8 +221,8 @@ class BakeryController extends ControllerBase {
       // @todo
       db_query("UPDATE {users_field_data} SET login = :login WHERE uid = :uid", array(':login' => $_SERVER['REQUEST_TIME'], ':uid' => $account->id()));
 
-      // Save UID provided by slave site.
-      $this->bakerySaveSlaveUid($account, $slave, $uid);
+      // Save UID provided by minion site.
+      $this->bakerySaveMinionUid($account, $minion, $uid);
     }
   }
 
@@ -248,9 +235,9 @@ class BakeryController extends ControllerBase {
     unset($_SESSION['bakery']['name']);
     $or_email = $_SESSION['bakery']['or_email'];
     unset($_SESSION['bakery']['or_email']);
-    $slave = $_SESSION['bakery']['slave'];
-    unset($_SESSION['bakery']['slave']);
-    $slave_uid = $_SESSION['bakery']['uid'];
+    $minion = $_SESSION['bakery']['minion'];
+    unset($_SESSION['bakery']['minion']);
+    $minion_uid = $_SESSION['bakery']['uid'];
     unset($_SESSION['bakery']['uid']);
 
     $key = $this->config('bakery.settings')->get('bakery_key');
@@ -260,12 +247,12 @@ class BakeryController extends ControllerBase {
       $account = user_load_by_mail($name);
     }
     if ($account) {
-      $this->bakerySaveSlaveUid($account, $slave, $slave_uid);
+      $this->bakerySaveMinionUid($account, $minion, $minion_uid);
 
       $payload = array();
       $payload['name'] = $account->getUsername();
       $payload['mail'] = $account->getEmail();
-      // For use in slave init field.
+      // For use in minion init field.
       $payload['uid'] = $account->id();
       // Add any synced fields.
       foreach ($this->config('bakery.settings')->get('bakery_supported_fields') as $type => $enabled) {
@@ -287,7 +274,7 @@ class BakeryController extends ControllerBase {
   }
 
   /**
-   * Custom return for slave registration process.
+   * Custom return for minion registration process.
    *
    * Redirects to the homepage on success or to
    * the register page if there was a problem.
@@ -316,13 +303,13 @@ class BakeryController extends ControllerBase {
       }
       else {
         if (!empty($errors['register'])) {
-          drupal_set_message(t('Registration is not enabled on @master. Please contact a site administrator.', array('@master' => $this->config('bakery.settings')->get('bakery_master'))), 'error');
-          \Drupal::logger('bakery')->error('Master Bakery site user registration is disabled', array());
+          drupal_set_message(t('Registration is not enabled on @main. Please contact a site administrator.', array('@main' => $this->config('bakery.settings')->get('bakery_main'))), 'error');
+          \Drupal::logger('bakery')->error('Main Bakery site user registration is disabled', array());
         }
         if (!empty($errors['validate'])) {
           // If the user must validate their email then we need to create an
-          // account for them on the slave site.
-          // Save a stub account so we have a slave UID to send.
+          // account for them on the minion site.
+          // Save a stub account so we have a minion UID to send.
           $language = \Drupal::languageManager()->getCurrentLanguage()->getId();
           $account = User::create();
           // Mandatory settings.
@@ -366,7 +353,7 @@ class BakeryController extends ControllerBase {
   }
 
   /**
-   * Custom return for errors during slave login process.
+   * Custom return for errors during minion login process.
    */
   public function bakeryLoginReturn() {
     $cookie = $this->bakeryTasteOatmealCookie();
@@ -377,26 +364,26 @@ class BakeryController extends ControllerBase {
       if (!empty($cookie['data']['errors'])) {
         $errors = $cookie['data']['errors'];
         if (!empty($errors['incorrect-credentials'])) {
-          drupal_set_message(t('Sorry, unrecognized username or password.'), 'error');
+          \Drupal::messenger()->addError(t('Sorry, unrecognized username or password.'));
         }
         elseif (!empty($errors['name'])) {
           // In case an attacker got the hash we filter the argument
           // here to avoid exposing a XSS vector.
-          drupal_set_message(Xss::filter($errors['name']), 'error');
+          \Drupal::messenger()->addError(Xss::filter($errors['name']));
         }
       }
       if (empty($cookie['data']['destination'])) {
         return $this->redirect('user.page');
       }
       else {
-        return $this->redirect($cookie['data']['destination']);
+        return new TrustedRedirectResponse($cookie['data']['destination']);
       }
     }
     throw new AccessDeniedHttpException();
   }
 
   /**
-   * Menu callback, invoked on the slave.
+   * Menu callback, invoked on the minion.
    */
   public function bakeryEatStroopwafelCookie() {
     // The session got set during validation.
@@ -409,7 +396,7 @@ class BakeryController extends ControllerBase {
     $account = \Drupal::entityManager()->getStorage('user')->loadByProperties(array('init' => $init));
     if (empty($account)) {
       // User not present.
-      $message = t('Account not found on %slave.', array('%slave' => $this->config('system.site')->get('name')));
+      $message = t('Account not found on %minion.', array('%minion' => $this->config('system.site')->get('name')));
 
     }
     else {
@@ -444,8 +431,8 @@ class BakeryController extends ControllerBase {
             '%mail_old' => $account->getEmail(),
             '%mail_new' => $stroopwafel['mail'],
           ));
-        $message = t('There was a problem updating your account on %slave. Please contact the administrator.', array(
-          '%slave' => $this->config('system.site')->get('name'),
+        $message = t('There was a problem updating your account on %minion. Please contact the administrator.', array(
+          '%minion' => $this->config('system.site')->get('name'),
         ));
 
         header('HTTP/1.1 409 Conflict');
@@ -458,8 +445,8 @@ class BakeryController extends ControllerBase {
             '%mail_old' => $account->mail,
             '%mail_new' => $stroopwafel['mail'],
           ));
-        $message = t('Successfully updated account on %slave.', array(
-          '%slave' => $this->config('system.site')->get('name'),
+        $message = t('Successfully updated account on %minion.', array(
+          '%minion' => $this->config('system.site')->get('name'),
         ));
 
       }
@@ -471,28 +458,28 @@ class BakeryController extends ControllerBase {
   }
 
   /**
-   * Save UID provided by a slave site. Should only be used on the master site.
+   * Save UID provided by a minion site. Should only be used on the main site.
    *
    * @param object $account
    *   A local user object.
-   * @param string $slave
-   *   The URL of the slave site.
-   * @param int $slave_uid
-   *   The corresponding UID on the slave site.
+   * @param string $minion
+   *   The URL of the minion site.
+   * @param int $minion_uid
+   *   The corresponding UID on the minion site.
    */
-  private function bakerySaveSlaveUid($account, $slave, $slave_uid) {
-    $slave_user_exists = db_query_range("SELECT 1 FROM {bakery_user} WHERE uid = :uid AND slave = :slave", 0, 1, array(
+  private function bakerySaveMinionUid($account, $minion, $minion_uid) {
+    $minion_user_exists = db_query_range("SELECT 1 FROM {bakery_user} WHERE uid = :uid AND minion = :minion", 0, 1, array(
       ':uid' => $account->id(),
-      ':slave' => $slave,
+      ':minion' => $minion,
     ))->fetchField();
-    if ($this->config('bakery.settings')->get('bakery_is_master') &&
-        !empty($slave_uid) &&
-        in_array($slave, $this->config('bakery.settings')->get('bakery_slaves') || array()) &&
-        !$slave_user_exists) {
+    if ($this->config('bakery.settings')->get('bakery_is_main') &&
+        !empty($minion_uid) &&
+        in_array($minion, $this->config('bakery.settings')->get('bakery_minions') || array()) &&
+        !$minion_user_exists) {
       $row = array(
         'uid' => $account->id(),
-        'slave' => $slave,
-        'slave_uid' => $slave_uid,
+        'minion' => $minion,
+        'minion_uid' => $minion_uid,
       );
       \Drupal::database()->insert('bakery_user')->fields($row)->execute();
     }
@@ -543,7 +530,7 @@ class BakeryController extends ControllerBase {
     }
     $_SESSION['bakery']['name'] = $cookie['name'];
     $_SESSION['bakery']['or_email'] = $cookie['or_email'];
-    $_SESSION['bakery']['slave'] = $cookie['slave'];
+    $_SESSION['bakery']['minion'] = $cookie['minion'];
     $_SESSION['bakery']['uid'] = $cookie['uid'];
     return AccessResult::allowed();
   }
@@ -560,7 +547,7 @@ class BakeryController extends ControllerBase {
       return AccessResult::forbidden();
     }
     $_SESSION['bakery']['name'] = $cookie['name'];
-    $_SESSION['bakery']['slave'] = $cookie['slave'];
+    $_SESSION['bakery']['minion'] = $cookie['minion'];
     $_SESSION['bakery']['uid'] = $cookie['uid'];
     return AccessResult::allowed();
   }
@@ -583,13 +570,14 @@ class BakeryController extends ControllerBase {
   private function bakeryTasteOatmealCookie() {
     $key = $this->config('bakery.settings')->get('bakery_key');
     $type = $this->bakery_service->cookieName('OATMEAL');
-
     if (!isset($_COOKIE[$type]) || !$key || !$this->config('bakery.settings')->get('bakery_domain')) {
+      dsm('failed cookie check on oatmeal');
       return FALSE;
     }
     if (($data = $this->bakery_service->validateData($_COOKIE[$type], $type)) !== FALSE) {
       return $data;
     }
+    dsm('Data did not validate');
     return FALSE;
   }
 

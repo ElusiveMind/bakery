@@ -4,7 +4,7 @@ namespace Drupal\bakery;
 
 /**
  * @file
- * Services used in  bakery SSO functions.
+ * Services used in bakery SSO functions.
  */
 
 use Drupal\user\Entity\User;
@@ -14,6 +14,8 @@ use Drupal\Component\Utility\Xss;
 use Drupal\Core\Database\Driver\mysql\Connection;
 use Drupal\Core\Config\ConfigFactory;
 use Drupal\Core\Url;
+use Drupal\bakery\BakeryCrypt;
+use Drupal\Core\Routing\TrustedRedirectResponse;
 
 /**
  * Common functionalities used in both controller and module.
@@ -67,7 +69,7 @@ class BakeryService {
       $cookie['name'] = $name;
       $cookie['mail'] = $mail;
       $cookie['init'] = $init;
-      $cookie['master'] = $this->config->get('bakery_is_master');
+      $cookie['main'] = $this->config->get('bakery_is_main');
       $cookie['calories'] = 480;
       $cookie['timestamp'] = $_SERVER['REQUEST_TIME'];
       $cookie_secure = ini_get('session.cookie_secure');
@@ -95,13 +97,13 @@ class BakeryService {
         'calories' => 320,
         'timestamp' => $_SERVER['REQUEST_TIME'],
       );
-      if ($this->config->get('bakery_is_master')) {
-        $cookie['master'] = 1;
+      if ($this->config->get('bakery_is_main')) {
+        $cookie['main'] = 1;
       }
       else {
-        $cookie['master'] = 0;
-        // Match the way slaves are set in Bakery settings, with ending slash.
-        $cookie['slave'] = $base_url . '/';
+        $cookie['main'] = 0;
+        // Match the way minions are set in Bakery settings, with ending slash.
+        $cookie['minion'] = $base_url . '/';
       }
       $cookie_secure = ini_get('session.cookie_secure');
       $type = $this->cookieName('OATMEAL');
@@ -115,7 +117,7 @@ class BakeryService {
    * Build internal init url (without scheme).
    */
   public function initField($uid) {
-    $url = $this->config->get('bakery_master');
+    $url = $this->config->get('bakery_main');
     $scheme = parse_url($url, PHP_URL_SCHEME);
     return str_replace($scheme . '://', '', $url) . 'user/' . $uid . '/edit';
   }
@@ -186,10 +188,13 @@ class BakeryService {
       return FALSE;
     }
     $decrypted_data = unserialize($this->bakeryDecrypt($encrypted_data));
+
     // Prevent one cookie being used in place of another.
     if ($type !== NULL && $decrypted_data['type'] !== $type) {
+      dsm('Cookie issue');
       return FALSE;
     }
+
     if ($decrypted_data['timestamp'] + $this->config->get('bakery_freshness') >= $_SERVER['REQUEST_TIME']) {
       return $decrypted_data;
     }
@@ -240,12 +245,11 @@ class BakeryService {
    * Test identification cookie.
    */
   public function tasteChocolatechipCookie() {
-
     $cookie = $this->validateCookie();
 
     // Continue if this is a valid cookie.
     // That only happens for users who have
-    // a current valid session on the master site.
+    // a current valid session on the main site.
     if ($cookie) {
       $destroy_cookie = FALSE;
       $user = \Drupal::currentUser();
@@ -254,7 +258,6 @@ class BakeryService {
       // already a valid session for user.
       if ($user->id() && $cookie['name'] !== $user->getUsername()) {
         // The SSO cookie doesn't match the existing session so force a logout.
-        // drupal_bootstrap(DRUPAL_BOOTSTRAP_FULL);
         user_logout();
       }
 
@@ -262,30 +265,32 @@ class BakeryService {
       $this->bakeChocolatechipCookie($cookie['name'], $cookie['mail'], $cookie['init']);
       if ($user->id() == 0) {
         // Since this might happen in hook_boot we need to bootstrap first.
-        // Note that this only runs if they have a valid session on the master
+        // Note that this only runs if they have a valid session on the main
         // and do not have one on the slave so it only creates the extra load of
         // a bootstrap on one pageview per session on the site
         // which is not much.
         // drupal_bootstrap(DRUPAL_BOOTSTRAP_FULL);
         // User is anonymous. If they do not have an account we'll create one by
-        // requesting their information from the master site. If they do have an
+        // requesting their information from the main site. If they do have an
         // account we may need to correct some disparant information.
-        $account = \Drupal::entityManager()
-          ->getStorage('user')
-          ->loadByProperties(array(
-            'name' => $cookie['name'],
-            'mail' => $cookie['mail'],
-          ));
+        $storage = \Drupal::entityTypeManager()->getStorage('user');
+        //print "<pre>";print_r($cookie);exit();
+        $ids = $storage->getQuery()
+          ->condition('name', $cookie['name'])
+          ->condition('mail', $cookie['mail'])
+          ->execute();
+        $account = $storage->loadMultiple($ids);
         $account = reset($account);
+
         // Fix out of sync users with valid init.
-        if (!$account && $this->config->get('bakery_is_master') == 0 && $cookie['master'] == 0) {
+        if (!$account && $this->config->get('bakery_is_main') == 0 && $cookie['main'] == 0) {
           $count = $this->db->select('users_field_data', 'u')->fields('u', array('uid'))
             ->condition('init', $cookie['init'])
             ->countQuery()->execute()->fetchField();
           if ($count > 1) {
             // Uh oh.
             \Drupal::logger('bakery')->notice('Account uniqueness problem: Multiple users found with init %init.', array('%init' => $cookie['init']));
-            drupal_set_message(t('Account uniqueness problem detected. <a href="@contact">Please contact the site administrator.</a>', array('@contact' => $this->config->get('bakery_master') . 'contact')), 'error');
+            drupal_set_message(t('Account uniqueness problem detected. <a href="@contact">Please contact the site administrator.</a>', array('@contact' => $this->config->get('bakery_main') . 'contact')), 'error');
           }
           if ($count == 1) {
             $account = \Drupal::entityManager()->getStorage('user')->loadByProperties(array('init' => $cookie['init']));
@@ -316,7 +321,7 @@ class BakeryService {
           }
         }
         // Create the account if it doesn't exist.
-        if (!$account && $this->config->get('bakery_is_master') == 0 && $cookie['master'] == 0) {
+        if (!$account && $this->config->get('bakery_is_main') == 0 && $cookie['main'] == 0) {
           $checks = TRUE;
           $mail_count = db_select('users_field_data', 'u')->fields('u', array('uid'))
             ->condition('uid', $user->id(), '!=')
@@ -342,7 +347,7 @@ class BakeryService {
             $checks = FALSE;
           }
           if ($checks) {
-            // Request information from master to keep data in sync.
+            // Request information from main to keep data in sync.
             $uid = $this->requestAccount($cookie['name']);
             // In case the account creation failed we want to make sure the user
             // gets their bad cookie destroyed by not returning too early.
@@ -363,7 +368,7 @@ class BakeryService {
           }
 
         }
-        if ($account && $cookie['master'] && $account->id() && !$this->config->get('bakery_is_master') && $account->get('init')->value != $cookie['init']) {
+        if ($account && $cookie['main'] && $account->id() && !$this->config->get('bakery_is_main') && $account->get('init')->value != $cookie['init']) {
           // User existed previously but init is wrong.
           // Fix it to ensure account remains in sync.
           // Make sure that there aren't any
@@ -460,8 +465,8 @@ class BakeryService {
    */
   public function validateCookie($type = 'CHOCOLATECHIP') {
     $key = $this->config->get('bakery_key');
-
     $type = $this->cookieName($type);
+
     if (!isset($_COOKIE[$type]) || !$key || !$this->config->get('bakery_domain')) {
       return FALSE;
     }
@@ -475,7 +480,7 @@ class BakeryService {
   }
 
   /**
-   * Request account information from master to create account locally.
+   * Request account information from main to create account locally.
    *
    * @param string $name
    *   The username or e-mail to request information for to create.
@@ -498,7 +503,7 @@ class BakeryService {
     if ($existing_account) {
       return FALSE;
     }
-    $master = $this->config->get('bakery_master');
+    $main = $this->config->get('bakery_main');
     $key = $this->config->get('bakery_key');
 
     // Save a stub account so we have a slave UID to send.
@@ -529,17 +534,17 @@ class BakeryService {
     $payload = array();
     $payload['name'] = $name;
     $payload['or_email'] = $or_email;
-    // Match how slaves are set on the master.
+    // Match how slaves are set on the main.
     $payload['slave'] = rtrim($base_url, '/') . '/';
     $payload['uid'] = $account->id();
     $payload['timestamp'] = $_SERVER['REQUEST_TIME'];
     $payload['type'] = $type;
     $data = $this->bakeData($payload);
     // $payload = UrlHelper::buildQuery(array($type => $data));
-    // Make request to master for account information.
+    // Make request to main for account information.
     $client = \Drupal::httpClient();
     try {
-      $response = $client->post($master . 'bakery/create', ["form_params" => [$type => $data]]);
+      $response = $client->post($main . 'bakery/create', ["form_params" => [$type => $data]]);
     }
     catch (BadResponseException $exception) {
       $response = $exception->getResponse();
@@ -550,18 +555,18 @@ class BakeryService {
       Drupal::logger('bakery')->error(t('Failed to fetch file due to error "%error"', array('%error' => $exception->getMessage())), 'error');
       return FALSE;
     }
-    // $result = drupal_http_request($master . 'bakery/create', $http_options);
+    // $result = drupal_http_request($main . 'bakery/create', $http_options);
     // Parse result and create account.
     if ($response->getStatusCode() != 200) {
       $message = $response->getBody();
-      \Drupal::logger('bakery')->error('Received response !code from master with message @message', array('!code' => $result->code, '@message' => $message));
+      \Drupal::logger('bakery')->error('Received response !code from main with message @message', array('!code' => $result->code, '@message' => $message));
       $account->delete();
       return FALSE;
     }
 
     if (($cookie = $this->validateData($response->getBody())) === FALSE) {
       // Invalid response.
-      \Drupal::logger('bakery')->error('Invalid response from master when attempting to create local account for @name', array('@name' => $name));
+      \Drupal::logger('bakery')->error('Invalid response from main when attempting to create local account for @name', array('@name' => $name));
       $account->delete();
       return FALSE;
     }
@@ -604,14 +609,9 @@ class BakeryService {
    */
   private function bakeryEncrypt($text) {
     $key = \Drupal::config('bakery.settings')->get('bakery_key');
-
     $cipher = 'aes-128-gcm';
-    $ivlen = openssl_cipher_iv_length($cipher);
-    $iv = openssl_random_pseudo_bytes($ivlen);
-
-    $data = openssl_encrypt($text, $cipher, $key, $options = OPENSSL_RAW_DATA, $iv, $tag);
-
-    return $data;
+    $encrypted = BakeryCrypt::encrypt($text, $key);
+    return $encrypted;
   }
 
   /**
@@ -625,14 +625,8 @@ class BakeryService {
    */
   private function bakeryDecrypt($text) {
     $key = \Drupal::config('bakery.settings')->get('bakery_key');
-
     $cipher = 'aes-128-gcm';
-    $ivlen = openssl_cipher_iv_length($cipher);
-    $iv = openssl_random_pseudo_bytes($ivlen);
-    
-    $data = openssl_decrypt($text, $cipher, $key, $options=0, $iv);
-
-    return $data;
+    $decrypted = BakeryCrypt::decrypt($text, $key);
+    return $decrypted;
   }
-
 }

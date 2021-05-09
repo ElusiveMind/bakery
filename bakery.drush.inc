@@ -10,8 +10,8 @@
  */
 function bakery_drush_help($section) {
   switch ($section) {
-    case 'drush:bakery-add-slave':
-      return dt('Update the Bakery configuration to add a slave site.');
+    case 'drush:bakery-add-minion':
+      return dt('Update the Bakery configuration to add a minion site.');
   }
 }
 
@@ -19,25 +19,25 @@ function bakery_drush_help($section) {
  * Implements hook_drush_command().
  */
 function bakery_drush_command() {
-  $items['bakery-add-slave'] = array(
-    'description' => 'Add a Bakery slave site.',
+  $items['bakery-add-minion'] = array(
+    'description' => 'Add a Bakery minion site.',
     'arguments' => array(
-      'slave' => 'Slave site URL, starts with http and ending with /.',
+      'minion' => 'Minion site URL, starts with http and ending with /.',
     ),
   );
   return $items;
 }
 
 /**
- * For adding slave sites.
+ * For adding minion sites.
  */
-function drush_bakery_add_slave($slave) {
+function drush_bakery_add_minion($minion) {
   // @FIXME
   // Could not extract the default value because it is either indeterminate, or
   // not scalar. You'll need to provide a default value in
   // config/install/bakery.settings.yml and config/schema/bakery.schema.yml.
   $config = \Drupal::configFactory()->getEditable('bakery.settings');
-  $slaves = $config->get('bakery_slaves');
-  $slaves[] = $slave;
-  $config->set('bakery_slaves', $slaves)->save();
+  $minions = $config->get('bakery_minions');
+  $minions[] = $minion;
+  $config->set('bakery_minions', $minion)->save();
 }

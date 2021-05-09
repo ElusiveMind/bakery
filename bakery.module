@@ -110,11 +110,9 @@ function bakery_user_view(array &$build, $account, $view_mode, $langcode) {
       $account->content['summary']['main_profile'] = array(
         '#type' => 'user_profile_item',
         '#title' => t('Primary profile'),
-      // Take everything up to '/edit'.
-        '#markup' => \Drupal::l(t('Profile on primary site'), substr($init_url, 0, strlen($init_url) - 5)),
-        '#access' => user_access('access user profiles'),
+        // Take everything up to '/edit'.
+        '#markup' => '<a href="'. substr($init_url, 0, strlen($init_url) - 5) .'">Profile on primary site</a>',
       );
-
     }
   }
 }
@@ -247,13 +245,13 @@ function bakery_form_alter(&$form, FormStateInterface $form_state, $form_id) {
  * Validate handler for the password reset login.
  */
 function _bakery_pass_validate($form, &$form_state) {
-  // On a slave site it's possible that a user requests their password but
-  // doesn't have an account on the slave site. So, we check if that's the case
-  // and use our helpful functions to create their account on the slave site.
+  // On a minion site it's possible that a user requests their password but
+  // doesn't have an account on the minion site. So, we check if that's the case
+  // and use our helpful functions to create their account on the minion site.
   $name = trim($form_state['values']['name']);
 
   $account = user_load_by_mail($name);
-  if (!$account) {
+  if (empty($account)) {
     // No success, try to load by name.
     $account = user_load_by_name($name);
   }
@@ -440,58 +438,4 @@ function _bakery_init_field_url($init) {
   else {
     return $scheme;
   }
-}
-
-/**
- * Encryption handler.
- *
- * @param string $text
- *   The text to be encrypted.
- *
- * @return sting
- *   Encryped text.
- */
-function bakery_encrypt($text) {
-  $key = \Drupal::config('bakery.settings')->get('bakery_key');
-
-  $td = mcrypt_module_open('rijndael-128', '', 'ecb', '');
-  $iv = mcrypt_create_iv(mcrypt_enc_get_iv_size($td), MCRYPT_RAND);
-
-  $key = substr($key, 0, mcrypt_enc_get_key_size($td));
-
-  mcrypt_generic_init($td, $key, $iv);
-
-  $data = mcrypt_generic($td, $text);
-
-  mcrypt_generic_deinit($td);
-  mcrypt_module_close($td);
-
-  return $data;
-}
-
-/**
- * Decryption handler.
- *
- * @param string $text
- *   The data to be decrypted.
- *
- * @return string
- *   Decrypted text.
- */
-function bakery_decrypt($text) {
-  $key = \Drupal::config('bakery.settings')->get('bakery_key');
-
-  $td = mcrypt_module_open('rijndael-128', '', 'ecb', '');
-  $iv = mcrypt_create_iv(mcrypt_enc_get_iv_size($td), MCRYPT_RAND);
-
-  $key = substr($key, 0, mcrypt_enc_get_key_size($td));
-
-  mcrypt_generic_init($td, $key, $iv);
-
-  $data = mdecrypt_generic($td, $text);
-
-  mcrypt_generic_deinit($td);
-  mcrypt_module_close($td);
-
-  return $data;
 }

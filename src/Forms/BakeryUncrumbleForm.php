@@ -107,24 +107,24 @@ class BakeryUncrumbleForm extends FormBase implements ContainerInjectionInterfac
     $count = db_select('users_field_data', 'u')->fields('u', array('uid'))->condition('init', $cookie['init'], '=')
       ->countQuery()->execute()->fetchField();
     if ($count > 1) {
-      drupal_set_message(t('Multiple accounts are associated with your master account. This must be fixed manually. <a href="@contact">Please contact the site administrator.</a>', array('%email' => $cookie['mail'], '@contact' => \Drupal::config('bakery.settings')->get('bakery_master') . 'contact')));
+      drupal_set_message(t('Multiple accounts are associated with your main account. This must be fixed manually. <a href="@contact">Please contact the site administrator.</a>', array('%email' => $cookie['mail'], '@contact' => \Drupal::config('bakery.settings')->get('bakery_main') . 'contact')));
       $form['pass']['#disabled'] = TRUE;
       $form['submit']['#disabled'] = TRUE;
     }
     elseif ($samename && $samemail && $samename->uid != $samemail->uid) {
-      drupal_set_message(t('Both an account with matching name and an account with matching email address exist, but they are different accounts. This must be fixed manually. <a href="@contact">Please contact the site administrator.</a>', array('%email' => $cookie['mail'], '@contact' => \Drupal::config('bakery.settings')->get('bakery_master') . 'contact')));
+      drupal_set_message(t('Both an account with matching name and an account with matching email address exist, but they are different accounts. This must be fixed manually. <a href="@contact">Please contact the site administrator.</a>', array('%email' => $cookie['mail'], '@contact' => \Drupal::config('bakery.settings')->get('bakery_main') . 'contact')));
       $form['pass']['#disabled'] = TRUE;
       $form['submit']['#disabled'] = TRUE;
     }
     elseif ($samename) {
-      $help = t("An account with a matching username was found. Repairing it will reset the email address to match your master account. If this is the correct account, please enter your %site password.", array('%site' => $site_name));
+      $help = t("An account with a matching username was found. Repairing it will reset the email address to match your main account. If this is the correct account, please enter your %site password.", array('%site' => $site_name));
       // This is a borderline information leak.
       // $form['mail']['#value'] = $samename->mail;.
       $form['mail']['#value'] = t('<em>*hidden*</em>');
       $form['mail']['#description'] = t('Will change to %new.', array('%new' => $cookie['mail']));
     }
     elseif ($samemail) {
-      $help = t("An account with a matching email address was found. Repairing it will reset the username to match your master account. If this is the correct account, please enter your %site password.", array('%site' => $site_name));
+      $help = t("An account with a matching email address was found. Repairing it will reset the username to match your main account. If this is the correct account, please enter your %site password.", array('%site' => $site_name));
       $form['name']['#value'] = $samemail->name;
       $form['name']['#description'] = t('Will change to %new.', array('%new' => $cookie['name']));
     }
@@ -152,7 +152,7 @@ class BakeryUncrumbleForm extends FormBase implements ContainerInjectionInterfac
        * Can't pretend that it was the "username or password"
        * so let's be helpful instead.
        */
-      $form_state->setErrorByName('pass', t('Sorry, unrecognized password. If you have forgotten your %site password, please <a href="@contact">contact the site administrator.</a>', array('%site' => \Drupal::config('system.site')->get('name'), '@contact' => \Drupal::config('bakery.settings')->get('bakery_master') . ' contact')));
+      $form_state->setErrorByName('pass', t('Sorry, unrecognized password. If you have forgotten your %site password, please <a href="@contact">contact the site administrator.</a>', array('%site' => \Drupal::config('system.site')->get('name'), '@contact' => \Drupal::config('bakery.settings')->get('bakery_main') . ' contact')));
 
     }
     else {
