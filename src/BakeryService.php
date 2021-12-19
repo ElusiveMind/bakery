@@ -56,18 +56,42 @@ class BakeryService {
     // Regenerate the session ID to prevent against session fixation attacks.
     // drupal_session_regenerate();
     // \Drupal::moduleHandler()->invokeAll('user_login', [$user]);
-    // user_module_invoke('login', $edit, $user);.
+    // user_module_invoke('login', $edit, $user);
+  }
+
+  public function bakeFortuneCookie($url) {
+    $key = $this->config->get('bakery_key');
+    $cookie = $this->tasteFortuneCookie();
+    if (!empty($key)) {
+      $cookie['return-url'][] = $url;
+      $type = $this->cookieName('FORTUNE');
+      $cookie['type'] = $type;
+      $cookie['timestamp'] = $_SERVER['REQUEST_TIME'];
+      $data = $this->bakeData($cookie);
+      setcookie($type, $data, $_SERVER['REQUEST_TIME'] + 300, '/', $this->config->get('bakery_domain'), (empty($cookie_secure) ? FALSE : TRUE));
+    }
+  }
+
+  public function tasteFortuneCookie() {
+    $cookie = $this->validateCookie('FORTUNE');
+    if ($cookie !== FALSE) {
+      return $cookie;
+    }
+    else {
+      return [];
+    }
   }
 
   /**
    * Create a new cookie for identification.
    */
-  public function bakeChocolatechipCookie($name, $mail, $init) {
+  public function bakeChocolatechipCookie($name, $mail, $pass, $init) {
     $key = $this->config->get('bakery_key');
     if (!empty($key)) {
       $cookie = array();
       $cookie['name'] = $name;
       $cookie['mail'] = $mail;
+      $cookie['pass'] = $pass;
       $cookie['init'] = $init;
       $cookie['main'] = $this->config->get('bakery_is_main');
       $cookie['calories'] = 480;
@@ -77,6 +101,33 @@ class BakeryService {
       $cookie['type'] = $type;
       $data = $this->bakeData($cookie);
       setcookie($type, $data, $_SERVER['REQUEST_TIME'] + $this->config->get('bakery_freshness'), '/', $this->config->get('bakery_domain'), (empty($cookie_secure) ? FALSE : TRUE));
+    }
+  }
+
+  /**
+   * Create a cooking for going back to where we came from after login.
+   */
+  public function bakeSnickerdoodleCookie($data) {
+    $key = $this->config->get('bakery_key');
+    if (!empty($key)) {
+      $cookie_secure = ini_get('session.cookie_secure');
+      $type = $this->cookieName('SNICKERDOODLE');
+      $cookie['timestamp'] = $_SERVER['REQUEST_TIME'];
+      $cookie['type'] = $type;
+      foreach ($data as $key => $value) {
+        $cookie[$key] = $value;
+      }
+      $data = $this->bakeData($cookie);
+      setcookie($type, $data, $_SERVER['REQUEST_TIME'] + $this->config->get('bakery_freshness'), '/', $this->config->get('bakery_domain'), (empty($cookie_secure) ? FALSE : TRUE));
+    }
+  }
+
+  public function tasteSnickerdoodleCookie() {
+    $cookie = $this->validateCookie();
+    if (!empty($cookie)) {
+      print_r($cookie);
+      exit();
+
     }
   }
 
@@ -191,7 +242,6 @@ class BakeryService {
 
     // Prevent one cookie being used in place of another.
     if ($type !== NULL && $decrypted_data['type'] !== $type) {
-      dsm('Cookie issue');
       return FALSE;
     }
 
@@ -262,7 +312,7 @@ class BakeryService {
       }
 
       // Bake a fresh cookie. Yum.
-      $this->bakeChocolatechipCookie($cookie['name'], $cookie['mail'], $cookie['init']);
+      $this->bakeChocolatechipCookie($cookie['name'], $cookie['mail'], $cookie['pass'], $cookie['init']);
       if ($user->id() == 0) {
         // Since this might happen in hook_boot we need to bootstrap first.
         // Note that this only runs if they have a valid session on the main
@@ -496,11 +546,11 @@ class BakeryService {
 
     $existing_account = user_load_by_name($name);
     if (!$existing_account && $or_email) {
-      $account = user_load_by_mail($name);
+      $existing_account = user_load_by_mail($name);
     }
     // We return FALSE in cases that the account already exists locally or if
     // there was an error along the way of requesting and creating it.
-    if ($existing_account) {
+    if (!empty($existing_account)) {
       return FALSE;
     }
     $main = $this->config->get('bakery_main');
@@ -534,8 +584,8 @@ class BakeryService {
     $payload = array();
     $payload['name'] = $name;
     $payload['or_email'] = $or_email;
-    // Match how slaves are set on the main.
-    $payload['slave'] = rtrim($base_url, '/') . '/';
+    // Match how minions are set on the main.
+    $payload['minion'] = rtrim($base_url, '/') . '/';
     $payload['uid'] = $account->id();
     $payload['timestamp'] = $_SERVER['REQUEST_TIME'];
     $payload['type'] = $type;
@@ -555,7 +605,6 @@ class BakeryService {
       Drupal::logger('bakery')->error(t('Failed to fetch file due to error "%error"', array('%error' => $exception->getMessage())), 'error');
       return FALSE;
     }
-    // $result = drupal_http_request($main . 'bakery/create', $http_options);
     // Parse result and create account.
     if ($response->getStatusCode() != 200) {
       $message = $response->getBody();

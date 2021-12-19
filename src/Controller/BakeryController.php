@@ -122,7 +122,7 @@ class BakeryController extends ControllerBase {
         if (!$this->config('user.settings')->get('verify_mail')) {
           // Create identification cookie and log user in.
           $init = $this->bakery_service->initField($account->id());
-          $this->bakery_service->bakeChocolatechipCookie($account->getUsername(), $account->getEmail(), $init);
+          $this->bakery_service->bakeChocolatechipCookie($account->getUsername(), $account->getEmail(), $account->getPassword(), $init);
           $this->bakery_service->userExternalLogin($account);
         }
         else {
@@ -169,9 +169,9 @@ class BakeryController extends ControllerBase {
 
       $uid = \Drupal::service('user.auth')->authenticate($name, $pass);
       $account = \Drupal\user\Entity\User::load($uid);
-      if ($account->id()) {
+      if (!empty($account) && $account->id()) {
         $init = $this->bakery_service->initField($account->id());
-        $this->bakery_service->bakeChocolatechipCookie($account->getUsername(), $account->getEmail(), $init);
+        $this->bakery_service->bakeChocolatechipCookie($account->getUsername(), $account->getEmail(), $account->getPassword(), $init);
         $user = \Drupal::currentUser();
         $user = $account;
         $edit = array('name' => $user->getUsername());
@@ -187,7 +187,9 @@ class BakeryController extends ControllerBase {
         // Clear the messages on the main's session,
         // since they were set during
         // drupal_form_submit() and will be displayed out of context.
-        drupal_get_messages();
+        //drupal_get_messages();
+        \Drupal::messenger()->addError('Bad Login');
+
       }
       // Bake a new cookie for validation on the minion.
       $data = array(
@@ -198,8 +200,8 @@ class BakeryController extends ControllerBase {
       if (isset($cookie['data']['destination'])) {
         $data['destination'] = $cookie['data']['destination'];
       }
-      $this->bakery_service->bakeOatmealCookie($name, $data);
-      return new TrustedRedirectResponse($cookie['minion'] . 'bakery/login');
+      //$this->bakery_service->bakeOatmealCookie($name, $data);
+      return new TrustedRedirectResponse($cookie['minion']);
     }
     throw new AccessDeniedHttpException();
   }
@@ -241,6 +243,7 @@ class BakeryController extends ControllerBase {
     unset($_SESSION['bakery']['uid']);
 
     $key = $this->config('bakery.settings')->get('bakery_key');
+    print $name;exit();
 
     $account = user_load_by_name($name);
     if (!$account && $or_email) {
@@ -575,6 +578,7 @@ class BakeryController extends ControllerBase {
       return FALSE;
     }
     if (($data = $this->bakery_service->validateData($_COOKIE[$type], $type)) !== FALSE) {
+      dsm($data);
       return $data;
     }
     dsm('Data did not validate');

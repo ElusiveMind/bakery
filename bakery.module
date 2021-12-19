@@ -8,15 +8,21 @@
 use Drupal\Core\Form\FormStateInterface;
 use Drupal\Core\Routing\TrustedRedirectResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\user\Entity\User;
 
 /**
  * Implements hook_user_login().
  */
 function bakery_user_login($account) {
-  // if (\Drupal::config('bakery.settings')->get('bakery_is_main') && $account->id() != 0) {
-  //   $init = \Drupal::service('bakery.bakery_service')->initField($account->id());
-  //   \Drupal::service('bakery.bakery_service')->bakeChocolatechipCookie($account->getUsername(), $account->getEmail(), $init);
-  // }
+  $init = \Drupal::service('bakery.bakery_service')->initField($account->id());
+  $cookie = \Drupal::service('bakery.bakery_service')->validateCookie('FORTUNE');
+  \Drupal::service('bakery.bakery_service')->bakeChocolatechipCookie($account->getUsername(), $account->getEmail(), $account->getPassword(), $init);
+  if (!empty($cookie['return-url'])) {
+    \Drupal::service('bakery.bakery_service')->eatCookie('FORTUNE');
+    header('location: ' . $cookie['return-url'][0]);
+    exit();
+  }
 }
 
 /**
@@ -33,19 +39,29 @@ function bakery_user_logout($account) {
   }
   // Destroy session cookie.
   \Drupal::service('bakery.bakery_service')->eatCookie(session_name());
+  \Drupal::service('bakery.bakery_service')->eatCookie();
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_insert()
+ */
+function bakery_user_insert($entity) {
+  $user = User::load($entity->id());
+  $user->addRole('vistausers');
+  $user->save();
 }
 
 /**
  * Implements hook_user_presave().
  */
-function bakery_user_presave(&$edit, $account, $category) {
+function bakery_user_presave(Drupal\Core\Entity\EntityInterface $entity) {
   if (\Drupal::config('bakery.settings')->get('bakery_is_main')) {
     // We store email/name if they changed. We want to wait with doing
     // anything else until the changes are saved locally.
     foreach (\Drupal::config('bakery.settings')->get('bakery_supported_fields') as $type => $enabled) {
-      if ($enabled && isset($edit[$type]) && isset($account->$type) && $account->$type != $edit[$type]) {
-        $_SESSION['bakery'][$type] = $edit[$type];
-      }
+      // if ($enabled && isset($edit[$type]) && isset($account->$type) && $account->$type != $edit[$type]) {
+      //   $_SESSION['bakery'][$type] = $edit[$type];
+      // }
     }
   }
 }
@@ -53,10 +69,10 @@ function bakery_user_presave(&$edit, $account, $category) {
 /**
  * Implements hook_user_update().
  */
-function bakery_user_update(&$edit, $account, $category) {
+function bakery_user_update(Drupal\Core\Entity\EntityInterface $entity) {
   // We need to push changes.
-  if (\Drupal::config('bakery.settings')->get('bakery_is_main') && isset($_SESSION['bakery'])) {
-    /*$type = 'stroopwafel';
+  if (0 && \Drupal::config('bakery.settings')->get('bakery_is_main') && isset($_SESSION['bakery'])) {
+    $type = 'stroopwafel';
     $key = \Drupal::config('bakery.settings')->get('bakery_key');
     $payload['data'] = serialize($_SESSION['bakery']);
     $payload['timestamp'] = $_SERVER['REQUEST_TIME'];
@@ -68,28 +84,28 @@ function bakery_user_update(&$edit, $account, $category) {
     $payload = drupal_http_build_query(array($type => $data));
     unset($_SESSION['bakery']);
     // Now update the slaves.
-    $slaves = \Drupal::config('bakery.settings')
-    ->get('bakery_slaves') || array();
-    foreach ($slaves as $slave) {
-    $options = array(
-    'headers' => array(
-    'Content-Type' => 'application/x-www-form-urlencoded; charset=utf-8',
-    ),
-    'method' => 'POST',
-    'data' => $payload,
-    );
-    $result = drupal_http_request($slave . 'bakery/update', $options);
-    if ($result->code != 200) {
-    drupal_set_message(t('Error %error for site at %url', array(
-    '%error' => $result->code . ' ' . $result->error,
-    '%url' => $slave,
-    )));
+    $minions = \Drupal::config('bakery.settings')
+      ->get('bakery_minions') || array();
+    foreach ($minions as $minion) {
+      $options = array(
+      'headers' => array(
+      'Content-Type' => 'application/x-www-form-urlencoded; charset=utf-8',
+      ),
+      'method' => 'POST',
+      'data' => $payload,
+      );
+      $result = drupal_http_request($minion . 'bakery/update', $options);
+      if ($result->code != 200) {
+        drupal_set_message(t('Error %error for site at %url', array(
+        '%error' => $result->code . ' ' . $result->error,
+        '%url' => $slave,
+        )));
+      }
+      else {
+      drupal_set_message($result->data);
+      // TODO: Roll back the change.
+      }
     }
-    else {
-    drupal_set_message($result->data);
-    // TODO: Roll back the change.
-    }
-    }*/
     $user = \Drupal::currentUser();
     if ($user->id() === $account->id()) {
       // Rebake SSO cookie so user stays authenticated.
@@ -179,26 +195,15 @@ function bakery_form_alter(&$form, FormStateInterface $form_state, $form_id) {
       break;
 
     case 'user_register_form':
-      // Provide register ability on the slave sites.
+      // Only do new user registration on the main site.
       if (!\Drupal::config('bakery.settings')->get('bakery_is_main')) {
-        if (\Drupal::service('router.admin_context')->isAdminRoute(\Drupal::routeMatch()->getRouteObject())) {
-          // Admin create user form. Add a note about account synchronization.
-          $form['account']['bakery_help'] = array(
-            '#value' => t('<strong>Note:</strong> Only use this form to create accounts for users who exist on <a href="!url">@main</a> and not on this site. Be sure to use the exact same username and e-mail for the account here that they have on @main.', array('!url' => \Drupal::config('bakery.settings')->get('bakery_main'), '@main' => \Drupal::config('bakery.settings')->get('bakery_main'))),
-            '#weight' => -100,
-          );
-        }
-        else {
-          // Anonymous user registration form.
-          // Populate fields if set from previous attempt.
-          if (isset($_SESSION['bakery']['register'])) {
-            $form['account']['name']['#default_value'] = $_SESSION['bakery']['register']['name'];
-            $form['account']['mail']['#default_value'] = $_SESSION['bakery']['register']['mail'];
-            unset($_SESSION['bakery']['register']);
-          }
-          // Replace the submit handler with our own.
-          // $form['#submit'] = array('_bakery_register_submit');.
-        }
+
+        $data = [];
+        $data['returnURL'] = '//' . $_SERVER['HTTP_HOST'] . '/';
+        \Drupal::service('bakery.bakery_service')->bakeSnickerdoodleCookie($data);
+        \Drupal::service('bakery.bakery_service')->eatCookie();
+        header("location: ". \Drupal::config('bakery.settings')->get('bakery_main'). "user/register");
+        exit();
       }
       break;
 
@@ -211,20 +216,21 @@ function bakery_form_alter(&$form, FormStateInterface $form_state, $form_id) {
       break;
 
     case 'user_pass_reset':
-      // As part of the slave site registration we need to handle email
+      // As part of the minion site registration we need to handle email
       // validation and password reset.
       if (!\Drupal::config('bakery.settings')->get('bakery_is_main')) {
         // Set a submit handler for the psuedo-reset form.
         $form['#submit'] = array('_bakery_reset_submit');
         // Unset its custom action.
-        unset($form['#action']);
+        //unset($form['#action']);
       }
       break;
 
     case 'user_login_block':
     case 'user_login_form':
-      // Provide login ability on the slave sites.
+      // Provide login ability on the minion sites.
       if (!\Drupal::config('bakery.settings')->get('bakery_is_main')) {
+
         // Replace two validators from user module because they log the user in
         // and test if account exists. We want to check if the account exists on
         // the main instead.
@@ -245,10 +251,11 @@ function bakery_form_alter(&$form, FormStateInterface $form_state, $form_id) {
  * Validate handler for the password reset login.
  */
 function _bakery_pass_validate($form, &$form_state) {
+  $values = $form_state->getValues();
   // On a minion site it's possible that a user requests their password but
   // doesn't have an account on the minion site. So, we check if that's the case
   // and use our helpful functions to create their account on the minion site.
-  $name = trim($form_state['values']['name']);
+  $name = trim($values['name']);
 
   $account = user_load_by_mail($name);
   if (empty($account)) {
@@ -265,6 +272,8 @@ function _bakery_pass_validate($form, &$form_state) {
  * Submit handler for the password reset form.
  */
 function _bakery_reset_submit($form, &$form_state) {
+  dsm('here');
+
   global $base_url;
 
   // If we're here it means the user has validated their email correctly.
@@ -275,6 +284,10 @@ function _bakery_reset_submit($form, &$form_state) {
   // against forgery.
   $path_args = explode('/', current_path());
   $account = \Drupal::entityManager()->getStorage('user')->load($path_args[2]);
+  print "<pre>";
+  print_r($account);
+  exit();
+
   // If they have not logged in before we need to update the main site.
   if ($account->login === 0) {
     $type = 'thinmint';

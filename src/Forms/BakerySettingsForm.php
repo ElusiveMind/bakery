@@ -31,6 +31,15 @@ class BakerySettingsForm extends ConfigFormBase {
    */
   public function buildForm(array $form, FormStateInterface $form_state) {
     $config = $this->config('bakery.settings');
+
+    $form['bakery_is_enabled'] = array(
+      '#type' => 'checkbox',
+      '#title' => 'Enable Single Sign On For This Site',
+      '#default_value' => $config->get('bakery_is_enabled'),
+      '#description' => t('Determine if the single-sign-on is enabled for this site/domain/subdomain. If unselected, you will need to authenticate against the local site information.'),
+    );
+
+
     $form['bakery_is_main'] = array(
       '#type' => 'checkbox',
       '#title' => 'Is this the main site?',
@@ -115,6 +124,7 @@ class BakerySettingsForm extends ConfigFormBase {
   public function submitForm(array &$form, FormStateInterface $form_state) {
     $values = $form_state->getValues();
     $this->config('bakery.settings')
+      ->set('bakery_is_enabled', $values['bakery_is_enabled'])
       ->set('bakery_is_main', $values['bakery_is_main'])
       ->set('bakery_main', $form_state->getValue('bakery_main'))
       ->set('bakery_help_text', $form_state->getValue('bakery_help_text'))

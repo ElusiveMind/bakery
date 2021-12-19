@@ -11,3 +11,8 @@ services:
     class: Drupal\bakery\PageCache\BakeryRequestPolicy
     tags:
       - { name: page_cache_request_policy }
+
+  bakery.anonymous_login:
+    class: Drupal\bakery\EventSubscriber\AnonymousLogin
+    tags:
+      - { name: event_subscriber }
